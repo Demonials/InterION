@@ -1,0 +1,1451 @@
+# interion.py
+import os
+import json
+import socket
+import qrcode
+from datetime import datetime
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
+import uvicorn
+from typing import Optional
+import aiofiles
+
+# Configuration
+UPLOAD_FOLDER = "shared_files"
+METADATA_FILE = "file_metadata.json"
+PORT = 8000
+
+# Create folder
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# Load metadata
+if os.path.exists(METADATA_FILE):
+    with open(METADATA_FILE, 'r') as f:
+        file_metadata = json.load(f)
+else:
+    file_metadata = {}
+
+app = FastAPI(title="INTERion File Share", version="1.0")
+
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('8.8.8.8', 1))
+        ip = s.getsockname()[0]
+    except:
+        ip = '127.0.0.1'
+    finally:
+        s.close()
+    return ip
+
+def format_size(size):
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    ip = get_local_ip()
+    url = f"http://{ip}:{PORT}"
+    
+    total_size = sum(meta['size'] for meta in file_metadata.values())
+    total_gb = total_size / (1024**3)
+    
+    # Build file list
+    file_list_html = ""
+    if file_metadata:
+        for filename, meta in sorted(file_metadata.items(), key=lambda x: x[1]['upload_date'], reverse=True):
+            file_list_html += f'''
+                <div class="file-item">
+                    <div class="file-info">
+                        <span class="file-name">{meta['custom_name']}</span>
+                        <span class="file-details">{meta['size_readable']} • {meta['upload_date']}</span>
+                    </div>
+                    <div class="file-actions">
+                        <a href="/download/{filename}" class="btn btn-download">Download</a>
+                        <a href="/delete/{filename}" class="btn btn-delete" onclick="return confirm('Delete this file?')">Delete</a>
+                    </div>
+                </div>
+            '''
+    else:
+        file_list_html = '''
+            <div class="empty-state">
+                <p>No files uploaded yet</p>
+                <p style="color: #999;">Upload your first file</p>
+            </div>
+        '''
+    
+    html = f'''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes" />
+  <title>INTERion · File Share</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700;14..32,800;14..32,900&display=swap" rel="stylesheet" />
+  <style>
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    
+    html {{ scroll-behavior: smooth; }}
+    
+    body {{
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #ffffff;
+      color: #1a1a1a;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      overflow-x: hidden;
+    }}
+    
+    /* ===== ANIMATIONS ===== */
+    @keyframes fadeUp {{
+      0% {{ opacity: 0; transform: translateY(30px); }}
+      100% {{ opacity: 1; transform: translateY(0); }}
+    }}
+    
+    @keyframes floatGlow {{
+      0%, 100% {{ transform: translateY(0px); }}
+      50% {{ transform: translateY(-8px); }}
+    }}
+    
+    @keyframes pulseBorder {{
+      0%, 100% {{ border-color: rgba(0, 0, 0, 0.06); }}
+      50% {{ border-color: rgba(0, 0, 0, 0.15); }}
+    }}
+    
+    @keyframes gradientShift {{
+      0% {{ background-position: 0% 50%; }}
+      50% {{ background-position: 100% 50%; }}
+      100% {{ background-position: 0% 50%; }}
+    }}
+    
+    @keyframes typeCursor {{
+      0%, 100% {{ opacity: 1; }}
+      50% {{ opacity: 0; }}
+    }}
+    
+    @keyframes slideInLeft {{
+      0% {{ opacity: 0; transform: translateX(-40px); }}
+      100% {{ opacity: 1; transform: translateX(0); }}
+    }}
+    
+    /* ===== REVEAL ON SCROLL ===== */
+    .reveal {{
+      opacity: 0;
+      transform: translateY(40px);
+      transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+                  transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    }}
+    
+    .reveal.visible {{
+      opacity: 1;
+      transform: translateY(0);
+    }}
+    
+    .stagger-children > * {{
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }}
+    
+    .stagger-children.visible > *:nth-child(1) {{ transition-delay: 0.05s; opacity: 1; transform: translateY(0); }}
+    .stagger-children.visible > *:nth-child(2) {{ transition-delay: 0.12s; opacity: 1; transform: translateY(0); }}
+    .stagger-children.visible > *:nth-child(3) {{ transition-delay: 0.19s; opacity: 1; transform: translateY(0); }}
+    .stagger-children.visible > *:nth-child(4) {{ transition-delay: 0.26s; opacity: 1; transform: translateY(0); }}
+    .stagger-children.visible > *:nth-child(5) {{ transition-delay: 0.33s; opacity: 1; transform: translateY(0); }}
+    .stagger-children.visible > *:nth-child(6) {{ transition-delay: 0.40s; opacity: 1; transform: translateY(0); }}
+    
+    /* ===== CONTAINER ===== */
+    .container {{
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }}
+    
+    /* ===== HEADER ===== */
+    .navbar {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 0;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+      animation: fadeUp 0.8s ease both;
+      flex-wrap: wrap;
+      gap: 16px;
+    }}
+    
+    .logo {{
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: #000;
+    }}
+    
+    .logo span {{
+      background: #000;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 12px;
+      border-radius: 40px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }}
+    
+    .nav-links {{
+      display: flex;
+      gap: 32px;
+      font-size: 15px;
+      font-weight: 500;
+      color: #2a2a2a;
+      flex-wrap: wrap;
+      align-items: center;
+    }}
+    
+    .nav-links a {{
+      text-decoration: none;
+      color: inherit;
+      position: relative;
+      transition: color 0.3s;
+    }}
+    
+    .nav-links a::after {{
+      content: '';
+      position: absolute;
+      bottom: -4px;
+      left: 0;
+      width: 0;
+      height: 2px;
+      background: #000;
+      transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }}
+    
+    .nav-links a:hover {{
+      color: #000;
+    }}
+    
+    .nav-links a:hover::after {{
+      width: 100%;
+    }}
+    
+    .nav-cta {{
+      background: #000;
+      color: #fff !important;
+      padding: 8px 24px;
+      border-radius: 40px;
+      font-weight: 600;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }}
+    
+    .nav-cta::after {{ display: none !important; }}
+    
+    .nav-cta:hover {{
+      background: #1a1a1a;
+      transform: scale(1.03);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+    }}
+    
+    /* ===== HERO ===== */
+    .hero {{
+      padding: 60px 0 80px;
+      animation: fadeUp 0.9s ease both;
+      animation-delay: 0.1s;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }}
+    
+    .hero::before {{
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle at 30% 40%, rgba(0, 0, 0, 0.01) 0%, transparent 60%),
+                  radial-gradient(circle at 70% 60%, rgba(0, 0, 0, 0.01) 0%, transparent 50%);
+      pointer-events: none;
+      animation: floatGlow 8s ease-in-out infinite;
+    }}
+    
+    .hero-badge {{
+      display: inline-block;
+      background: rgba(0, 0, 0, 0.03);
+      padding: 6px 20px;
+      border-radius: 40px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      margin-bottom: 24px;
+      border: 1px solid rgba(0, 0, 0, 0.04);
+      animation: pulseBorder 4s infinite ease-in-out;
+      position: relative;
+      z-index: 1;
+    }}
+    
+    .hero h1 {{
+      font-size: clamp(44px, 10vw, 92px);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 1.04;
+      margin-bottom: 16px;
+      background: linear-gradient(135deg, #000000 20%, #3d3d3d 60%, #000000 80%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      background-size: 200% 200%;
+      animation: gradientShift 8s ease infinite alternate;
+      position: relative;
+      z-index: 1;
+    }}
+    
+    .hero-sub {{
+      font-size: clamp(18px, 2.2vw, 26px);
+      font-weight: 400;
+      color: #3a3a3a;
+      max-width: 640px;
+      margin: 0 auto 16px;
+      line-height: 1.6;
+      opacity: 0.85;
+      position: relative;
+      z-index: 1;
+      min-height: 44px;
+    }}
+    
+    .typing-cursor {{
+      display: inline-block;
+      width: 2px;
+      height: 1.2em;
+      background: #000;
+      margin-left: 2px;
+      vertical-align: text-bottom;
+      animation: typeCursor 0.8s step-end infinite;
+    }}
+    
+    .hero-actions {{
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 14px;
+      margin-top: 28px;
+      position: relative;
+      z-index: 1;
+    }}
+    
+    /* ===== BANNER ===== */
+    .banner-wrapper {{
+      margin: 48px auto 0;
+      max-width: 880px;
+      position: relative;
+      z-index: 1;
+      perspective: 1200px;
+    }}
+    
+    .banner-card {{
+      background: #f8f8f8;
+      border-radius: 32px;
+      padding: 32px 40px;
+      border: 1px solid rgba(0, 0, 0, 0.04);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.04);
+      transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+      transform-style: preserve-3d;
+      will-change: transform;
+      min-height: 200px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }}
+    
+    .banner-card:hover {{
+      transform: rotateX(2deg) rotateY(2deg) scale(1.01);
+      box-shadow: 0 40px 100px rgba(0, 0, 0, 0.06);
+      border-color: rgba(0, 0, 0, 0.08);
+    }}
+    
+    .banner-content {{
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }}
+    
+    .banner-content.slide-out {{
+      opacity: 0;
+      transform: translateY(-20px);
+    }}
+    
+    .banner-content.active {{
+      opacity: 1;
+      transform: translateY(0);
+    }}
+    
+    .banner-label {{
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: rgba(0, 0, 0, 0.3);
+    }}
+    
+    .banner-title {{
+      font-size: clamp(20px, 2.5vw, 32px);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #000;
+    }}
+    
+    .banner-desc {{
+      font-size: 15px;
+      color: #4a4a4a;
+      max-width: 80%;
+      line-height: 1.6;
+    }}
+    
+    .banner-tags {{
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }}
+    
+    .banner-tag {{
+      background: rgba(0, 0, 0, 0.04);
+      padding: 4px 14px;
+      border-radius: 40px;
+      font-size: 12px;
+      font-weight: 500;
+      color: #3a3a3a;
+      border: 1px solid rgba(0, 0, 0, 0.04);
+    }}
+    
+    .banner-dots {{
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 20px;
+    }}
+    
+    .banner-dot {{
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.1);
+      border: none;
+      cursor: pointer;
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      padding: 0;
+    }}
+    
+    .banner-dot.active {{
+      background: #000;
+      width: 28px;
+      border-radius: 4px;
+    }}
+    
+    .banner-dot:hover {{
+      background: rgba(0, 0, 0, 0.3);
+    }}
+    
+    /* ===== STATS ===== */
+    .stats {{
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin: 40px 0 24px;
+    }}
+    
+    .stat {{
+      background: #fafafa;
+      padding: 20px;
+      border-radius: 16px;
+      border: 1px solid rgba(0, 0, 0, 0.04);
+      text-align: center;
+      transition: all 0.3s;
+    }}
+    
+    .stat:hover {{
+      transform: translateY(-4px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.04);
+    }}
+    
+    .stat .num {{
+      font-size: 28px;
+      font-weight: 700;
+      color: #000;
+      display: block;
+    }}
+    
+    .stat .label {{
+      font-size: 12px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 4px;
+    }}
+    
+    /* ===== UPLOAD ===== */
+    .upload-section {{
+      background: #fafafa;
+      border: 2px dashed rgba(0, 0, 0, 0.08);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+      transition: border-color 0.3s;
+    }}
+    
+    .upload-section:hover {{
+      border-color: #000;
+    }}
+    
+    .upload-section h3 {{
+      font-size: 16px;
+      margin-bottom: 16px;
+      color: #000;
+    }}
+    
+    .upload-form {{
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }}
+    
+    .form-group {{
+      flex: 1;
+      min-width: 140px;
+    }}
+    
+    .form-group label {{
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #666;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }}
+    
+    .form-group input[type="file"],
+    .form-group input[type="text"] {{
+      width: 100%;
+      padding: 10px 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: border-color 0.2s;
+      background: #fff;
+      color: #1a1a1a;
+    }}
+    
+    .form-group input:focus {{
+      outline: none;
+      border-color: #000;
+    }}
+    
+    /* ===== BUTTONS ===== */
+    .btn {{
+      padding: 10px 28px;
+      background: #000;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-decoration: none;
+      display: inline-block;
+      text-align: center;
+    }}
+    
+    .btn:hover {{
+      background: #222;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    }}
+    
+    .btn:disabled {{
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none !important;
+    }}
+    
+    .btn-download {{
+      background: #22a65e;
+      padding: 6px 16px;
+      font-size: 13px;
+    }}
+    
+    .btn-download:hover {{
+      background: #1a8a4e;
+    }}
+    
+    .btn-delete {{
+      background: #dc3545;
+      padding: 6px 16px;
+      font-size: 13px;
+    }}
+    
+    .btn-delete:hover {{
+      background: #c82333;
+    }}
+    
+    /* ===== PROGRESS ===== */
+    .progress-container {{
+      margin-top: 16px;
+      display: none;
+    }}
+    
+    .progress-bar {{
+      width: 100%;
+      height: 6px;
+      background: #e0e0e0;
+      border-radius: 3px;
+      overflow: hidden;
+    }}
+    
+    .progress-fill {{
+      height: 100%;
+      background: #000;
+      width: 0%;
+      transition: width 0.3s ease;
+      border-radius: 3px;
+    }}
+    
+    .progress-text {{
+      display: block;
+      text-align: center;
+      margin-top: 6px;
+      font-size: 13px;
+      color: #666;
+      font-weight: 600;
+    }}
+    
+    /* ===== FILE LIST ===== */
+    .file-list {{
+      background: #fff;
+      border: 1px solid #eee;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }}
+    
+    .file-list-header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #f0f0f0;
+      flex-wrap: wrap;
+      gap: 8px;
+    }}
+    
+    .file-list-header h3 {{
+      font-size: 16px;
+      color: #000;
+    }}
+    
+    .file-count {{
+      background: #f0f0f0;
+      padding: 2px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      color: #666;
+    }}
+    
+    .file-item {{
+      padding: 12px 0;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }}
+    
+    .file-item:last-child {{
+      border-bottom: none;
+    }}
+    
+    .file-info {{
+      flex: 1;
+      min-width: 120px;
+    }}
+    
+    .file-name {{
+      font-weight: 600;
+      color: #1a1a1a;
+      display: block;
+      font-size: 14px;
+      word-break: break-word;
+    }}
+    
+    .file-details {{
+      font-size: 12px;
+      color: #888;
+      display: block;
+      margin-top: 2px;
+    }}
+    
+    .file-actions {{
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }}
+    
+    .empty-state {{
+      text-align: center;
+      padding: 40px 20px;
+      color: #999;
+    }}
+    
+    .empty-state p {{
+      margin: 4px 0;
+    }}
+    
+    /* ===== FOOTER ===== */
+    .footer {{
+      padding: 32px 0 24px;
+      border-top: 1px solid rgba(0, 0, 0, 0.04);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 20px;
+      font-size: 14px;
+      color: #888;
+    }}
+    
+    .footer-links {{
+      display: flex;
+      gap: 28px;
+      flex-wrap: wrap;
+    }}
+    
+    .footer-links a {{
+      text-decoration: none;
+      color: inherit;
+      transition: color 0.3s;
+      border-bottom: 1px solid transparent;
+    }}
+    
+    .footer-links a:hover {{
+      color: #000;
+      border-bottom-color: #000;
+    }}
+    
+    /* ===== RESPONSIVE ===== */
+    @media (max-width: 768px) {{
+      .container {{ padding: 0 18px; }}
+      
+      .navbar {{
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+        padding: 16px 0;
+      }}
+      
+      .nav-links {{
+        justify-content: center;
+        gap: 16px;
+        font-size: 14px;
+      }}
+      
+      .hero {{ padding: 40px 0 48px; }}
+      .hero h1 {{ font-size: clamp(32px, 12vw, 48px); }}
+      .hero-sub {{ font-size: 17px; min-height: 36px; }}
+      
+      .stats {{ grid-template-columns: 1fr 1fr; gap: 12px; }}
+      .stat {{ padding: 16px; }}
+      .stat .num {{ font-size: 22px; }}
+      
+      .upload-form {{ flex-direction: column; align-items: stretch; }}
+      .form-group {{ min-width: unset; }}
+      .btn {{ width: 100%; justify-content: center; }}
+      
+      .banner-card {{ padding: 24px 20px; border-radius: 24px; min-height: 160px; }}
+      .banner-title {{ font-size: 20px; }}
+      .banner-desc {{ font-size: 14px; max-width: 100%; }}
+      
+      .file-item {{ flex-direction: column; align-items: stretch; gap: 8px; padding: 12px 0; }}
+      .file-actions {{ justify-content: flex-end; }}
+      .file-actions .btn {{ flex: 1; text-align: center; }}
+      
+      .footer {{ flex-direction: column; align-items: center; text-align: center; gap: 12px; }}
+      .footer-links {{ justify-content: center; gap: 16px; }}
+    }}
+    
+    @media (max-width: 480px) {{
+      .stats {{ grid-template-columns: 1fr; }}
+      .hero h1 {{ font-size: 30px; }}
+      .banner-card {{ border-radius: 20px; padding: 20px 16px; min-height: 140px; }}
+      .banner-title {{ font-size: 18px; }}
+      .banner-desc {{ font-size: 13px; }}
+      .nav-links {{ gap: 12px; font-size: 13px; }}
+      .logo {{ font-size: 20px; justify-content: center; }}
+      .banner-dot {{ width: 6px; height: 6px; }}
+      .banner-dot.active {{ width: 24px; }}
+      .file-actions {{ flex-direction: column; }}
+      .file-actions .btn {{ width: 100%; }}
+    }}
+    
+    /* ===== DARK MODE ===== */
+    @media (prefers-color-scheme: dark) {{
+      body {{ background: #1a1a1a; color: #e8e8e8; }}
+      
+      .stat {{ background: #242424; border-color: #333; }}
+      .stat .num {{ color: #e8e8e8; }}
+      .stat .label {{ color: #888; }}
+      
+      .upload-section {{ background: #242424; border-color: #333; }}
+      .upload-section:hover {{ border-color: #888; }}
+      .upload-section h3 {{ color: #e8e8e8; }}
+      
+      .form-group input[type="file"],
+      .form-group input[type="text"] {{
+        background: #1a1a1a;
+        border-color: #333;
+        color: #e8e8e8;
+      }}
+      .form-group input:focus {{ border-color: #888; }}
+      
+      .file-list {{ background: #242424; border-color: #333; }}
+      .file-list-header {{ border-bottom-color: #333; }}
+      .file-list-header h3 {{ color: #e8e8e8; }}
+      .file-count {{ background: #333; color: #aaa; }}
+      .file-item {{ border-bottom-color: #333; }}
+      .file-name {{ color: #e8e8e8; }}
+      .file-details {{ color: #888; }}
+      
+      .banner-card {{ background: #242424; border-color: #333; }}
+      .banner-label {{ color: rgba(255,255,255,0.3); }}
+      .banner-title {{ color: #e8e8e8; }}
+      .banner-desc {{ color: #aaa; }}
+      .banner-tag {{ background: rgba(255,255,255,0.04); color: #aaa; border-color: rgba(255,255,255,0.04); }}
+      
+      .banner-dot {{ background: rgba(255,255,255,0.1); }}
+      .banner-dot.active {{ background: #e8e8e8; }}
+      .banner-dot:hover {{ background: rgba(255,255,255,0.3); }}
+      
+      .progress-bar {{ background: #333; }}
+      .progress-text {{ color: #888; }}
+      
+      .footer {{ border-top-color: #333; color: #666; }}
+      .footer-links a:hover {{ color: #e8e8e8; border-bottom-color: #e8e8e8; }}
+      
+      .btn {{ background: #e8e8e8; color: #1a1a1a; }}
+      .btn:hover {{ background: #fff; }}
+      .btn-download {{ background: #22a65e; color: #fff; }}
+      .btn-download:hover {{ background: #28b86a; }}
+      .btn-delete {{ background: #dc3545; color: #fff; }}
+      .btn-delete:hover {{ background: #e74c5c; }}
+      
+      .empty-state {{ color: #666; }}
+      .empty-state p:last-child {{ color: #555; }}
+      
+      .hero::before {{
+        background: radial-gradient(circle at 30% 40%, rgba(255,255,255,0.02) 0%, transparent 60%),
+                    radial-gradient(circle at 70% 60%, rgba(255,255,255,0.02) 0%, transparent 50%);
+      }}
+      
+      .hero-badge {{
+        background: rgba(255,255,255,0.03);
+        border-color: rgba(255,255,255,0.04);
+        color: #aaa;
+      }}
+      
+      .hero h1 {{
+        background: linear-gradient(135deg, #ffffff 20%, #888888 60%, #ffffff 80%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }}
+      
+      .hero-sub {{ color: #aaa; }}
+      
+      .typing-cursor {{ background: #e8e8e8; }}
+    }}
+  </style>
+</head>
+<body>
+
+  <div class="container">
+
+    <!-- NAVBAR -->
+    <nav class="navbar">
+      <a href="#" class="logo">
+        ⚡ INTERion
+        <span>v1.0</span>
+      </a>
+      <div class="nav-links">
+        <a href="#">Product</a>
+        <a href="#">Developers</a>
+        <a href="#">Enterprise</a>
+        <a href="/qr" class="nav-cta">Connect</a>
+      </div>
+    </nav>
+
+    <!-- HERO -->
+    <section class="hero">
+      <div class="hero-badge">✦ Next-gen file platform</div>
+      <h1>Experience liftoff</h1>
+      <div class="hero-sub">
+        <span id="typedWords"></span><span class="typing-cursor"></span>
+      </div>
+      <div class="hero-actions">
+        <a href="#upload" class="btn btn-primary">▶ Upload Files</a>
+        <a href="#files" class="btn btn-outline">Browse Files</a>
+      </div>
+
+      <!-- BANNER -->
+      <div class="banner-wrapper">
+        <div class="banner-card" id="bannerCard">
+          <div class="banner-content active" id="bannerContent">
+            <div class="banner-label">✦ ONLINE</div>
+            <div class="banner-title">{url}</div>
+            <div class="banner-desc">Share files across all your devices — fast, secure, and seamless.</div>
+            <div class="banner-tags">
+              <span class="banner-tag">⚡ 100+ Mbps</span>
+              <span class="banner-tag">🔒 Local Network</span>
+              <span class="banner-tag">📱 Mobile Ready</span>
+            </div>
+          </div>
+        </div>
+        <div class="banner-dots" id="bannerDots">
+          <button class="banner-dot active" data-index="0"></button>
+          <button class="banner-dot" data-index="1"></button>
+          <button class="banner-dot" data-index="2"></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STATS -->
+    <div class="stats">
+      <div class="stat">
+        <span class="num">{len(file_metadata)}</span>
+        <span class="label">Files</span>
+      </div>
+      <div class="stat">
+        <span class="num">{total_gb:.2f}GB</span>
+        <span class="label">Storage Used</span>
+      </div>
+      <div class="stat">
+        <span class="num">⚡</span>
+        <span class="label">100+ Mbps</span>
+      </div>
+      <div class="stat">
+        <span class="num">●</span>
+        <span class="label">Online</span>
+      </div>
+    </div>
+
+    <!-- UPLOAD -->
+    <div class="upload-section" id="upload">
+      <h3>⬆ Upload File</h3>
+      <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form" id="uploadForm">
+        <div class="form-group">
+          <label for="file">Choose File</label>
+          <input type="file" name="file" id="file" required>
+        </div>
+        <div class="form-group">
+          <label for="filename">Custom Name (optional)</label>
+          <input type="text" name="filename" id="filename" placeholder="Enter custom name">
+        </div>
+        <button type="submit" class="btn" id="uploadBtn">Upload</button>
+      </form>
+      <div class="progress-container" id="progressContainer">
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <span class="progress-text" id="progressText">0%</span>
+      </div>
+    </div>
+
+    <!-- FILE LIST -->
+    <div class="file-list" id="files">
+      <div class="file-list-header">
+        <h3>📂 Files</h3>
+        <span class="file-count">{len(file_metadata)} files</span>
+      </div>
+      {file_list_html}
+    </div>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+      <div>© 2026 INTERion · Fast file sharing</div>
+      <div class="footer-links">
+        <a href="/qr">QR Code</a>
+        <a href="/speed-test">Speed Test</a>
+        <a href="/files">API</a>
+        <a href="#">Docs</a>
+      </div>
+    </footer>
+
+  </div>
+
+  <script>
+    (function() {{
+      'use strict';
+
+      // ----- TYPING ANIMATION -----
+      const phrases = [
+        'Fast file sharing for all your devices.',
+        'Upload, download, and share instantly.',
+        '100+ Mbps transfer speeds on your local network.'
+      ];
+
+      let phraseIndex = 0;
+      let charIndex = 0;
+      let isDeleting = false;
+      const typedElement = document.getElementById('typedWords');
+
+      function typeEffect() {{
+        const currentPhrase = phrases[phraseIndex];
+
+        if (isDeleting) {{
+          typedElement.textContent = currentPhrase.substring(0, charIndex - 1);
+          charIndex--;
+        }} else {{
+          typedElement.textContent = currentPhrase.substring(0, charIndex + 1);
+          charIndex++;
+        }}
+
+        let typeSpeed = isDeleting ? 30 : 60;
+
+        if (!isDeleting && charIndex === currentPhrase.length) {{
+          typeSpeed = 2000;
+          isDeleting = true;
+        }} else if (isDeleting && charIndex === 0) {{
+          isDeleting = false;
+          phraseIndex = (phraseIndex + 1) % phrases.length;
+          typeSpeed = 400;
+        }}
+
+        setTimeout(typeEffect, typeSpeed);
+      }}
+
+      setTimeout(typeEffect, 500);
+
+      // ----- BANNER TRANSITIONS -----
+      const bannerData = [{{
+        label: '✦ ONLINE',
+        title: '{url}',
+        desc: 'Share files across all your devices — fast, secure, and seamless.',
+        tags: ['⚡ 100+ Mbps', '🔒 Local Network', '📱 Mobile Ready']
+      }}, {{
+        label: '⚡ SPEED',
+        title: '100+ Mbps Transfers',
+        desc: 'Optimized for high-speed file sharing on your local network.',
+        tags: ['🚀 Fast', '💾 Large Files', '📶 Wi-Fi']
+      }}, {{
+        label: '🔒 SECURE',
+        title: 'Your Files, Your Network',
+        desc: 'No cloud, no upload limits. Everything stays on your local network.',
+        tags: ['🔐 Private', '🏠 Local', '✅ Trusted']
+      }}];
+
+      let currentSlide = 0;
+      const bannerContent = document.getElementById('bannerContent');
+      const dots = document.querySelectorAll('.banner-dot');
+      let slideInterval;
+
+      function updateBanner(index) {{
+        const data = bannerData[index];
+        if (!data) return;
+
+        bannerContent.classList.remove('active');
+        bannerContent.classList.add('slide-out');
+
+        setTimeout(() => {{
+          bannerContent.innerHTML = `
+            <div class="banner-label">${{data.label}}</div>
+            <div class="banner-title">${{data.title}}</div>
+            <div class="banner-desc">${{data.desc}}</div>
+            <div class="banner-tags">
+              ${{data.tags.map(tag => `<span class="banner-tag">${{tag}}</span>`).join('')}}
+            </div>
+          `;
+
+          bannerContent.classList.remove('slide-out');
+          bannerContent.classList.add('active');
+
+          dots.forEach((dot, i) => {{
+            dot.classList.toggle('active', i === index);
+          }});
+        }}, 400);
+      }}
+
+      function nextSlide() {{
+        currentSlide = (currentSlide + 1) % bannerData.length;
+        updateBanner(currentSlide);
+      }}
+
+      dots.forEach((dot, index) => {{
+        dot.addEventListener('click', () => {{
+          clearInterval(slideInterval);
+          currentSlide = index;
+          updateBanner(currentSlide);
+          slideInterval = setInterval(nextSlide, 5000);
+        }});
+      }});
+
+      slideInterval = setInterval(nextSlide, 5000);
+
+      // ----- 3D TILT ON BANNER -----
+      const banner = document.getElementById('bannerCard');
+
+      banner.addEventListener('mousemove', (e) => {{
+        const rect = banner.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width;
+        const y = (e.clientY - rect.top) / rect.height;
+        const rotateY = (x - 0.5) * 6;
+        const rotateX = (0.5 - y) * 6;
+        banner.style.transform = `rotateX($${{rotateX}}deg) rotateY($${{rotateY}}deg) scale(1.01)`;
+      }});
+
+      banner.addEventListener('mouseleave', () => {{
+        banner.style.transform = 'rotateX(0deg) rotateY(0deg) scale(1)';
+      }});
+
+      // ----- UPLOAD PROGRESS -----
+      document.getElementById('uploadForm').addEventListener('submit', function(e) {{
+        const fileInput = document.getElementById('file');
+        if (fileInput.files.length === 0) return;
+
+        const formData = new FormData(this);
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const uploadBtn = document.getElementById('uploadBtn');
+
+        progressContainer.style.display = 'block';
+        uploadBtn.disabled = true;
+        uploadBtn.textContent = 'Uploading...';
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/upload', true);
+
+        xhr.upload.addEventListener('progress', function(e) {{
+          if (e.lengthComputable) {{
+            const percent = Math.round((e.loaded / e.total) * 100);
+            progressFill.style.width = percent + '%';
+            progressText.textContent = percent + '%';
+          }}
+        }});
+
+        xhr.onload = function() {{
+          if (xhr.status === 200) {{
+            progressFill.style.width = '100%';
+            progressText.textContent = '✓ Complete!';
+            setTimeout(() => window.location.reload(), 800);
+          }} else {{
+            alert('Upload failed: ' + xhr.statusText);
+            progressContainer.style.display = 'none';
+            uploadBtn.disabled = false;
+            uploadBtn.textContent = 'Upload';
+          }}
+        }};
+
+        xhr.onerror = function() {{
+          alert('Upload failed!');
+          progressContainer.style.display = 'none';
+          uploadBtn.disabled = false;
+          uploadBtn.textContent = 'Upload';
+        }};
+
+        xhr.send(formData);
+        e.preventDefault();
+      }});
+
+      // ----- INTERSECTION OBSERVER -----
+      const observer = new IntersectionObserver((entries) => {{
+        entries.forEach(entry => {{
+          if (entry.isIntersecting) {{
+            entry.target.classList.add('visible');
+          }}
+        }});
+      }}, {{
+        threshold: 0.12,
+        rootMargin: '0px 0px -20px 0px'
+      }});
+
+      document.querySelectorAll('.reveal, .stagger-children').forEach(el => {{
+        observer.observe(el);
+      }});
+
+      // Stagger children observer
+      const staggerObserver = new IntersectionObserver((entries) => {{
+        entries.forEach(entry => {{
+          if (entry.isIntersecting) {{
+            entry.target.classList.add('visible');
+          }}
+        }});
+      }}, {{
+        threshold: 0.1
+      }});
+
+      document.querySelectorAll('.stagger-children').forEach(el => {{
+        staggerObserver.observe(el);
+      }});
+
+    }})();
+  </script>
+
+</body>
+</html>
+'''
+    
+    return HTMLResponse(html)
+
+@app.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    filename: Optional[str] = Form(None)
+):
+    try:
+        original_filename = file.filename
+        
+        if filename and filename.strip():
+            name_without_ext = filename.strip()
+            _, ext = os.path.splitext(original_filename)
+            final_filename = name_without_ext + ext
+        else:
+            final_filename = original_filename
+        
+        file_path = os.path.join(UPLOAD_FOLDER, final_filename)
+        counter = 1
+        while os.path.exists(file_path):
+            name, ext = os.path.splitext(final_filename)
+            final_filename = f"{name}_{counter}{ext}"
+            file_path = os.path.join(UPLOAD_FOLDER, final_filename)
+        
+        size = 0
+        chunk_size = 1024 * 1024
+        
+        async with aiofiles.open(file_path, 'wb') as f:
+            while chunk := await file.read(chunk_size):
+                await f.write(chunk)
+                size += len(chunk)
+        
+        file_metadata[final_filename] = {
+            'original_name': original_filename,
+            'custom_name': filename if filename and filename.strip() else original_filename,
+            'size': size,
+            'upload_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'size_readable': format_size(size)
+        }
+        
+        with open(METADATA_FILE, 'w') as f:
+            json.dump(file_metadata, f, indent=2)
+        
+        return JSONResponse({
+            "status": "success",
+            "filename": final_filename,
+            "size": format_size(size)
+        })
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/download/{filename}")
+async def download_file(filename: str):
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    return FileResponse(file_path, filename=filename)
+
+@app.get("/delete/{filename}")
+async def delete_file(filename: str):
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+    
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        if filename in file_metadata:
+            del file_metadata[filename]
+            with open(METADATA_FILE, 'w') as f:
+                json.dump(file_metadata, f, indent=2)
+        return JSONResponse({"status": "success"})
+    else:
+        raise HTTPException(status_code=404, detail="File not found")
+
+@app.get("/qr", response_class=HTMLResponse)
+async def show_qr():
+    ip = get_local_ip()
+    url = f"http://{ip}:{PORT}"
+    
+    qr = qrcode.QRCode(version=1, box_size=10, border=5)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    img_path = "temp_qr.png"
+    img.save(img_path)
+    
+    import base64
+    with open(img_path, 'rb') as f:
+        img_data = base64.b64encode(f.read()).decode()
+    os.remove(img_path)
+    
+    return f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <title>INTERion · QR</title>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+                background: #ffffff;
+                min-height: 100vh;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                padding: 20px;
+            }}
+            .qr-container {{
+                background: #fafafa;
+                border: 2px solid #eee;
+                border-radius: 16px;
+                padding: 32px;
+                text-align: center;
+                max-width: 400px;
+                width: 100%;
+            }}
+            .logo {{
+                font-size: 20px;
+                font-weight: 700;
+                color: #000;
+            }}
+            h2 {{
+                color: #1a1a1a;
+                margin-top: 12px;
+                font-size: 18px;
+                font-weight: 600;
+            }}
+            .qr-code {{
+                margin: 20px 0;
+                background: white;
+                padding: 16px;
+                border-radius: 12px;
+                display: inline-block;
+                border: 1px solid #eee;
+            }}
+            .qr-code img {{
+                max-width: 100%;
+                height: auto;
+                display: block;
+            }}
+            .url {{
+                background: #f5f5f5;
+                padding: 12px;
+                border-radius: 8px;
+                word-break: break-all;
+                font-family: 'Courier New', monospace;
+                font-size: 13px;
+                color: #333;
+                margin: 12px 0;
+            }}
+            .btn-back {{
+                display: inline-block;
+                padding: 10px 24px;
+                background: #000;
+                color: #fff;
+                border: none;
+                border-radius: 8px;
+                text-decoration: none;
+                font-weight: 600;
+                font-size: 14px;
+                transition: all 0.2s;
+            }}
+            .btn-back:hover {{
+                background: #222;
+                transform: translateY(-1px);
+            }}
+            .instruction {{
+                color: #888;
+                font-size: 14px;
+                margin: 8px 0;
+            }}
+            @media (prefers-color-scheme: dark) {{
+                body {{ background: #1a1a1a; }}
+                .qr-container {{ background: #242424; border-color: #333; }}
+                .logo {{ color: #e8e8e8; }}
+                h2 {{ color: #e8e8e8; }}
+                .url {{ background: #1a1a1a; color: #aaa; }}
+                .instruction {{ color: #888; }}
+                .qr-code {{ border-color: #333; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="qr-container">
+            <div class="logo">⚡ INTERion</div>
+            <h2>Scan to Access</h2>
+            <p class="instruction">Open camera and scan QR code</p>
+            <div class="qr-code">
+                <img src="data:image/png;base64,{img_data}" alt="QR Code">
+            </div>
+            <div class="url">{url}</div>
+            <a href="/" class="btn-back">← Back</a>
+        </div>
+    </body>
+    </html>
+    '''
+
+@app.get("/files")
+async def list_files():
+    return JSONResponse(file_metadata)
+
+@app.get("/speed-test")
+async def speed_test():
+    size = 10 * 1024 * 1024
+    data = os.urandom(size)
+    return StreamingResponse(
+        iter([data]),
+        media_type='application/octet-stream',
+        headers={
+            'Content-Disposition': 'attachment; filename="speed_test_10mb.bin"',
+            'Content-Length': str(size)
+        }
+    )
+
+if __name__ == "__main__":
+    ip = get_local_ip()
+    url = f"http://{ip}:{PORT}"
+    
+    print("=" * 50)
+    print("⚡ INTERion File Share")
+    print("=" * 50)
+    print(f"✅ Server: {url}")
+    print(f"📱 Access from phone: {url}")
+    print(f"📂 Files: {UPLOAD_FOLDER}")
+    print("=" * 50)
+    print("Features:")
+    print("  • Upload with custom names")
+    print("  • Download files")
+    print("  • Delete files")
+    print("  • QR code access")
+    print("  • 100+ Mbps speed")
+    print("  • Antigravity-style UI")
+    print("=" * 50)
+    print("Press Ctrl+C to stop")
+    print("=" * 50)
+    
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=PORT,
+        log_level="info",
+        access_log=True
+    )

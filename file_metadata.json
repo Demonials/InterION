@@ -1,0 +1,39 @@
+{
+  "RobloxPlayerInstaller.exe": {
+    "original_name": "RobloxPlayerInstaller.exe",
+    "custom_name": "RobloxPlayerInstaller.exe",
+    "size": 13650896,
+    "upload_date": "2026-08-26 23:35:38",
+    "size_readable": "13.0 MB"
+  },
+  "VSCodeUserSetup-x64-1.134.0.exe": {
+    "original_name": "VSCodeUserSetup-x64-1.134.0.exe",
+    "custom_name": "VSCodeUserSetup-x64-1.134.0.exe",
+    "size": 231465552,
+    "upload_date": "2026-08-26 23:40:11",
+    "size_readable": "220.7 MB"
+  },
+  "python-3.13.15-amd64.exe": {
+    "original_name": "python-3.13.15-amd64.exe",
+    "custom_name": "python-3.13.15-amd64.exe",
+    "size": 29452944,
+    "size_readable": "28.1 MB",
+    "upload_date": "2026-08-26 23:58:04",
+    "destination": "my_files",
+    "hash": "edec09c4853aeae9"
+  },
+  "Webseries.zip": {
+    "original_name": "Adarsh.Baal.Vidyalaya.S01.720p.HEVC.Hindi.WEB-DL.5.1.ESub.x265-HDHub4u.Ms.zip",
+    "custom_name": "Webseries",
+    "size": 1658767074,
+    "upload_date": "2026-08-27 12:48:52",
+    "size_readable": "1.5 GB"
+  },
+  "Hybridion.html": {
+    "original_name": "dashboard (5).html",
+    "custom_name": "Hybridion",
+    "size": 148234,
+    "upload_date": "2026-09-16 11:21:48",
+    "size_readable": "144.8 KB"
+  }
+}
