@@ -9,5 +9,19 @@
       "src": "api/*.js",
       "use": "@vercel/node"
     }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
+    },
+    {
+      "src": "/",
+      "dest": "/control-center/index.html"
+    },
+    {
+      "src": "/control-center/(.*)",
+      "dest": "/control-center/$1"
+    }
   ]
 }
