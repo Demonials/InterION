@@ -1,18 +1,33 @@
-from dotenv import load_dotenv
-load_dotenv()
+try:
+ from dotenv import load_dotenv
+ load_dotenv()
+except ImportError:
+ pass
 import json, os, socket, ipaddress, urllib.error, urllib.request
 from pathlib import Path
 from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-CLOUD_URL=os.getenv('INTERION_CLOUD_URL','').rstrip('/')
-FIREBASE_WEB_CONFIG=os.getenv('FIREBASE_WEB_CONFIG','').strip()
+CLOUD_URL='https://interion-zeta.vercel.app'
+_PUBLIC_CONFIG=None
 COOKIE='interion_firebase'
 COOKIE_SECURE=os.getenv('INTERION_COOKIE_SECURE','false').lower()=='true'
 HOST_FILE=Path(os.getenv('INTERION_HOST_FILE','interion_host.json'))
 LAN_CIDR=os.getenv('INTERION_LAN_CIDR','').strip()
+def public_config():
+ global _PUBLIC_CONFIG
+ if _PUBLIC_CONFIG is not None:return _PUBLIC_CONFIG
+ try:
+  req=urllib.request.Request(CLOUD_URL+'/api/config',headers={'Accept':'application/json'})
+  with urllib.request.urlopen(req,timeout=10) as r:data=json.loads(r.read().decode())
+  required=('apiKey','authDomain','projectId','appId')
+  if not all(data.get(k) for k in required):raise ValueError('Incomplete Firebase web configuration')
+  _PUBLIC_CONFIG={k:data[k] for k in required}
+  return _PUBLIC_CONFIG
+ except Exception as e:
+  raise HTTPException(503,'Could not load InterION configuration from the cloud. Check your internet connection or try again later.') from e
+
 def cloud(path,payload,token=None):
- if not CLOUD_URL: raise HTTPException(503,'Set INTERION_CLOUD_URL in .env')
  h={'Content-Type':'application/json'}
  if token: h['Authorization']='Bearer '+token
  req=urllib.request.Request(CLOUD_URL+'/api/'+path,data=json.dumps(payload).encode(),headers=h,method='POST')
@@ -30,8 +45,7 @@ def claim_host(uid):
  if not HOST_FILE.exists():HOST_FILE.write_text(json.dumps({'uid':uid},indent=2))
  if host_uid()!=uid:raise HTTPException(403,'This host is registered to another account. Same-account devices only.')
 def login_html():
- if not FIREBASE_WEB_CONFIG:return HTMLResponse('<h1>Firebase setup required</h1><p>Set FIREBASE_WEB_CONFIG and INTERION_CLOUD_URL in .env.</p>')
- cfg=json.dumps(json.loads(FIREBASE_WEB_CONFIG))
+ cfg=json.dumps(public_config())
  body='''<h1>Sign in to InterION</h1><p>Use the same Google account on every device connected to this host.</p><button id="signin">Continue with Google</button><p id="msg"></p><script type="module">
 import {initializeApp} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {getAuth,GoogleAuthProvider,signInWithPopup} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
