@@ -1,5 +1,8 @@
 """Google authentication and owner-controlled approval for INTERion."""
 import html, json, os, secrets, tempfile
+from dotenv import load_dotenv
+
+load_dotenv()
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -66,8 +69,6 @@ td,th{{padding:12px 8px;border-bottom:1px solid #eee;text-align:left}}.actions{{
 </style></head><body><main class="panel"><div class="brand">⚡ INTERion <span>ACCESS</span></div>\${body}</main></body></html>""")
 
 def install_access_control(app:FastAPI):
-    signer=_serializer()
-
     @app.middleware("http")
     async def approval_gate(request:Request,call_next):
         path=request.url.path
@@ -123,7 +124,7 @@ google.accounts.id.renderButton(document.getElementById('googleButton'),{{theme:
                     "last_sign_in":datetime.now(timezone.utc).isoformat()}
         _write_users(users)
         response=JSONResponse({"ok":True,"redirect":"/admin" if owner else ("/" if status=="approved" else ("/rejected" if status=="rejected" else "/pending"))})
-        response.set_cookie(COOKIE_NAME,signer.dumps({"sub":sub,"email":email}),max_age=SESSION_MAX_AGE,
+        response.set_cookie(COOKIE_NAME,_serializer().dumps({"sub":sub,"email":email}),max_age=SESSION_MAX_AGE,
                             httponly=True,secure=COOKIE_SECURE,samesite="lax")
         response.delete_cookie(NONCE_COOKIE)
         return response
@@ -159,10 +160,10 @@ google.accounts.id.renderButton(document.getElementById('googleButton'),{{theme:
         for sub,user in sorted(_read_users().items(),key=lambda item:item[1].get("created_at","")):
             if user.get("status")=="admin": continue
             email=html.escape(str(user.get("email",""))); name=html.escape(str(user.get("name","")))
-            status=html.escape(str(user.get("status","pending"))); safe_sub=json.dumps(sub)
+            status=html.escape(str(user.get("status","pending"))); safe_sub=html.escape(sub,quote=True)
             actions=""
-            if status!="approved": actions+=f'<button class="approve" onclick="setAccess({safe_sub},\\'approved\\')">Approve</button>'
-            if status!="rejected": actions+=f'<button class="reject" onclick="setAccess({safe_sub},\\'rejected\\')">Reject</button>'
+            if status!="approved": actions+=f'<button class="approve" data-sub="{safe_sub}" data-status="approved" onclick="setAccess(this.dataset.sub,this.dataset.status)">Approve</button>'
+            if status!="rejected": actions+=f'<button class="reject" data-sub="{safe_sub}" data-status="rejected" onclick="setAccess(this.dataset.sub,this.dataset.status)">Reject</button>'
             rows.append(f"<tr><td>{name}<br><small>{email}</small></td><td>{status}</td><td><div class='actions'>{actions}</div></td></tr>")
         body=f"""<h1>Access requests</h1><p>Only your configured Google account can approve or reject users.</p>
 <table><thead><tr><th>Account</th><th>Status</th><th>Action</th></tr></thead><tbody>{''.join(rows) or '<tr><td colspan="3">No requests yet.</td></tr>'}</tbody></table>
