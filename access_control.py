@@ -66,7 +66,7 @@ button{{border:0;border-radius:11px;padding:12px 15px;font-size:13px;font-weight
 .status{{display:inline-flex;gap:8px;background:#fff5df;color:#805500;padding:8px 12px;border-radius:30px;font-size:12px;font-weight:700}}
 .dot{{width:7px;height:7px;background:#d99a20;border-radius:50%}}small{{color:#8a9099}}table{{width:100%;border-collapse:collapse;margin-top:18px;font-size:13px}}
 td,th{{padding:12px 8px;border-bottom:1px solid #eee;text-align:left}}.actions{{display:flex;gap:7px}}.actions button{{padding:9px 10px}}.approve{{background:#16794b}}.reject{{background:#b42318}}#error{{color:#b42318;font-size:13px;min-height:20px}}
-</style></head><body><main class="panel"><div class="brand">⚡ INTERion <span>ACCESS</span></div>\${body}</main></body></html>""")
+</style></head><body><main class="panel"><div class="brand">⚡ INTERion <span>ACCESS</span></div>{body}</main></body></html>""")
 
 def install_access_control(app:FastAPI):
     @app.middleware("http")
@@ -106,7 +106,7 @@ google.accounts.id.renderButton(document.getElementById('googleButton'),{{theme:
 
     @app.post("/auth/google")
     async def google_login(request:Request):
-        if not GOOGLE_CLIENT_ID or not ADMIN_EMAIL: raise HTTPException(503,"Owner has not configured Google sign-in.")
+        if not GOOGLE_CLIENT_ID or not ADMIN_EMAIL or len(SESSION_SECRET)<32: raise HTTPException(503,"Owner has not finished configuring Google sign-in and the session secret.")
         body=await request.json()
         nonce=str(body.get("nonce","")); cookie_nonce=request.cookies.get(NONCE_COOKIE,"")
         credential=body.get("credential","")
