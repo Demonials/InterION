@@ -30,7 +30,8 @@ def public_config():
 def cloud(path,payload,token=None):
  h={'Content-Type':'application/json'}
  if token: h['Authorization']='Bearer '+token
- req=urllib.request.Request(CLOUD_URL+'/api/'+path,data=json.dumps(payload).encode(),headers=h,method='POST')
+ endpoint=path if path.endswith('.js') else path+'.js'
+ req=urllib.request.Request(CLOUD_URL+'/api/'+endpoint,data=json.dumps(payload).encode(),headers=h,method='POST')
  try:
   with urllib.request.urlopen(req,timeout=8) as r:return json.loads(r.read().decode())
  except urllib.error.HTTPError as e:
