@@ -90,7 +90,7 @@ def install_access_control(app:FastAPI):
     dest='/pending' if v.get('status')=='pending' else '/rejected'
     if path!=dest:return RedirectResponse(dest,status_code=303)
    else:
-    claim_host(str(v['uid']));request.state.interion_user=v
+    request.state.interion_user=v
   except HTTPException as e:
    if e.status_code in (401,403):
     r=RedirectResponse('/login',status_code=303);r.delete_cookie(COOKIE);return r
@@ -114,7 +114,7 @@ def install_access_control(app:FastAPI):
   if not expires or expires<time.time():raise HTTPException(400,'Sign-in challenge expired or invalid. Please try again.')
   if not token:raise HTTPException(400,'Firebase ID token required')
   v=cloud('verify',{},token)
-  if v.get('status')=='approved':claim_host(str(v['uid']))
+  # Approved accounts are isolated by UID in local storage; no single-account host lock.
   status=v.get('status','pending');dest='/' if status=='approved' else ('/pending' if status=='pending' else '/rejected')
   r=JSONResponse({'ok':True,'redirect':dest});r.set_cookie(COOKIE,token,max_age=3600,httponly=True,secure=COOKIE_SECURE,samesite='lax');return r
  @app.get('/pending',response_class=HTMLResponse)
@@ -123,18 +123,7 @@ def install_access_control(app:FastAPI):
  async def rejected():return HTMLResponse('<main style="font-family:system-ui;margin:12vh auto;max-width:520px;padding:24px"><h1>Access not approved</h1><p>This account cannot access this host.</p><a href="/logout">Sign out</a></main>')
  @app.get('/logout')
  @app.post('/logout')
- async def logout(request:Request):
-  # Only the account currently bound to this host may release that binding.
-  token=request.cookies.get(COOKIE,'')
-  if token and HOST_FILE.exists():
-   try:
-    identity=cloud('verify',{},token)
-    if str(identity.get('uid',''))==str(host_uid() or ''):
-     HOST_FILE.unlink(missing_ok=True)
-   except Exception:
-    # Always clear the browser session, but never release host ownership
-    # when the account could not be verified with the cloud.
-    pass
+ async def logout():
   r=RedirectResponse('/login',status_code=303)
   r.delete_cookie(COOKIE)
   return r
