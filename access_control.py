@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 load_dotenv()
-import json, os, urllib.error, urllib.request
+import json, os, socket, ipaddress, urllib.error, urllib.request
 from pathlib import Path
 from typing import Any
 from fastapi import FastAPI, HTTPException, Request
@@ -10,6 +10,7 @@ FIREBASE_WEB_CONFIG=os.getenv('FIREBASE_WEB_CONFIG','').strip()
 COOKIE='interion_firebase'
 COOKIE_SECURE=os.getenv('INTERION_COOKIE_SECURE','false').lower()=='true'
 HOST_FILE=Path(os.getenv('INTERION_HOST_FILE','interion_host.json'))
+LAN_CIDR=os.getenv('INTERION_LAN_CIDR','').strip()
 def cloud(path,payload,token=None):
  if not CLOUD_URL: raise HTTPException(503,'Set INTERION_CLOUD_URL in .env')
  h={'Content-Type':'application/json'}
@@ -37,11 +38,24 @@ import {getAuth,GoogleAuthProvider,signInWithPopup} from 'https://www.gstatic.co
 const app=initializeApp(CONFIG);const auth=getAuth(app);document.getElementById('signin').onclick=async()=>{try{const u=await signInWithPopup(auth,new GoogleAuthProvider());const idToken=await u.user.getIdToken(true);const r=await fetch('/auth/firebase',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idToken})});const d=await r.json();if(!r.ok)throw Error(d.detail||'Sign in failed');location.href=d.redirect||'/';}catch(e){document.getElementById('msg').textContent=e.message;}};
 </script>'''.replace('CONFIG',cfg)
  return HTMLResponse('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>InterION Login</title><style>body{font-family:system-ui;background:#f3f5f7;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}main{background:white;padding:32px;border-radius:20px;max-width:460px;width:100%}button{background:#15171a;color:white;border:0;border-radius:10px;padding:13px 20px;font-weight:700}</style></head><body><main><b>⚡ INTERION</b>'+body+'</main></body></html>')
+def client_is_local(request:Request):
+ try:
+  remote=ipaddress.ip_address(request.client.host)
+  if remote.is_loopback:return True
+  if LAN_CIDR:return remote in ipaddress.ip_network(LAN_CIDR,strict=False)
+  sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+  try:sock.connect(('8.8.8.8',1));local=ipaddress.ip_address(sock.getsockname()[0])
+  finally:sock.close()
+  if local.is_private and remote.version==4:return remote in ipaddress.ip_network(str(local)+'/24',strict=False)
+  return remote.is_private
+ except Exception:return False
+
 def install_access_control(app:FastAPI):
  @app.middleware('http')
  async def gate(request:Request,call_next):
   path=request.url.path
   if path in {'/login','/auth/firebase','/logout','/health','/favicon.ico'}:return await call_next(request)
+  if not client_is_local(request):return HTMLResponse('<h2>Local network required</h2><p>Connect to the same local network as the InterION host.</p>',status_code=403)
   token=request.cookies.get(COOKIE)
   if not token:return RedirectResponse('/login',status_code=303)
   try:
