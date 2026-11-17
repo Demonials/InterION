@@ -1,0 +1,6 @@
+.env
+auth_users.json
+__pycache__/
+*.py[cod]
+shared_files/
+temp_qr.png
