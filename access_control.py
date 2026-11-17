@@ -18,7 +18,7 @@ def public_config():
  global _PUBLIC_CONFIG
  if _PUBLIC_CONFIG is not None:return _PUBLIC_CONFIG
  try:
-  req=urllib.request.Request(CLOUD_URL+'/api/config',headers={'Accept':'application/json'})
+  req=urllib.request.Request(CLOUD_URL+'/api/config.js',headers={'Accept':'application/json'})
   with urllib.request.urlopen(req,timeout=10) as r:data=json.loads(r.read().decode())
   required=('apiKey','authDomain','projectId','appId')
   if not all(data.get(k) for k in required):raise ValueError('Incomplete Firebase web configuration')
