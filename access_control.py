@@ -123,8 +123,21 @@ def install_access_control(app:FastAPI):
  async def rejected():return HTMLResponse('<main style="font-family:system-ui;margin:12vh auto;max-width:520px;padding:24px"><h1>Access not approved</h1><p>This account cannot access this host.</p><a href="/logout">Sign out</a></main>')
  @app.get('/logout')
  @app.post('/logout')
- async def logout():
-  r=RedirectResponse('/login',status_code=303);r.delete_cookie(COOKIE);return r
+ async def logout(request:Request):
+  # Only the account currently bound to this host may release that binding.
+  token=request.cookies.get(COOKIE,'')
+  if token and HOST_FILE.exists():
+   try:
+    identity=cloud('verify',{},token)
+    if str(identity.get('uid',''))==str(host_uid() or ''):
+     HOST_FILE.unlink(missing_ok=True)
+   except Exception:
+    # Always clear the browser session, but never release host ownership
+    # when the account could not be verified with the cloud.
+    pass
+  r=RedirectResponse('/login',status_code=303)
+  r.delete_cookie(COOKIE)
+  return r
  @app.get('/health')
  async def health():return JSONResponse({'status':'ok','auth':'firebase-cloud'})
 def log_transfer(request:Request,event:dict[str,Any]):
