@@ -774,6 +774,7 @@ async def home():
 
 @app.post("/upload")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...),
     filename: Optional[str] = Form(None)
 ):
