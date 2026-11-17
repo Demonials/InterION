@@ -1,11 +1,40 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>InterION Secure Sign-in</title>
-<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f3f5f8;color:#171b24;font-family:Inter,system-ui,sans-serif;padding:20px}.card{width:min(440px,100%);background:#fff;border:1px solid #e4e8ee;border-radius:20px;padding:34px;text-align:center}.brand{font-size:22px;font-weight:850}.muted{color:#687386;line-height:1.6}button{border:0;border-radius:10px;padding:13px 20px;background:#171b24;color:white;font-weight:750;cursor:pointer}#msg{min-height:24px;color:#b42318;overflow-wrap:anywhere}</style></head>
-<body><main class="card"><div class="brand">⚡ INTERION</div><h1>Secure sign-in</h1><p class="muted">Authenticate with Google. When complete, your sign-in will be returned securely to the local InterION window.</p><button id="signin">Continue with Google</button><p id="msg"></p></main>
+<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f3f5f8;color:#171b24;font-family:system-ui,sans-serif;padding:20px}.card{width:min(440px,100%);background:#fff;border:1px solid #e4e8ee;border-radius:20px;padding:34px;text-align:center}.brand{font-size:22px;font-weight:850}.muted{color:#687386;line-height:1.6}button{border:0;border-radius:10px;padding:13px 20px;background:#171b24;color:white;font-weight:750;cursor:pointer}button:disabled{opacity:.55;cursor:wait}#msg{min-height:24px;color:#b42318;overflow-wrap:anywhere;white-space:pre-wrap}</style></head>
+<body><main class="card"><div class="brand">⚡ INTERION</div><h1>Secure sign-in</h1><p class="muted">Authenticate with Google. Your sign-in will return to the local InterION window.</p><button id="signin" disabled>Loading sign-in…</button><p id="msg">Preparing secure sign-in…</p></main>
 <script type="module">
-import {initializeApp} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import {getAuth,GoogleAuthProvider,signInWithPopup} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-const msg=document.getElementById('msg'),button=document.getElementById('signin'),params=new URLSearchParams(location.search),origin=params.get('origin'),state=params.get('state');
-if(!origin||!state||!/^https?:\\/\\/(localhost|127\\.0\\.0\\.1|(?:192\\.168\\.|10\\.)|172\\.(?:1[6-9]|2[0-9]|3[01])\\.)/.test(origin)){button.disabled=true;msg.textContent='Invalid local sign-in request. Start again from InterION.';}
-try{const r=await fetch('/api/config.js',{cache:'no-store'});if(!r.ok)throw Error('Cloud config unavailable ('+r.status+')');const cfg=await r.json();const auth=getAuth(initializeApp(cfg));button.onclick=async()=>{button.disabled=true;msg.textContent='Waiting for Google…';try{const result=await signInWithPopup(auth,new GoogleAuthProvider());const idToken=await result.user.getIdToken(true);if(!window.opener||window.opener.closed)throw Error('Local InterION window is no longer available.');window.opener.postMessage({type:'INTERION_AUTH',state,idToken},origin);msg.textContent='Signed in. You can close this window.';setTimeout(()=>window.close(),700);}catch(e){msg.textContent=e.message;button.disabled=false;}};}catch(e){button.disabled=true;msg.textContent=e.message;}
+const msg=document.getElementById('msg'),button=document.getElementById('signin');
+const params=new URLSearchParams(location.search),origin=params.get('origin'),state=params.get('state');
+function validLocalOrigin(value){
+ try{const u=new URL(value);if(!['http:','https:'].includes(u.protocol))return false;
+ const h=u.hostname;return h==='localhost'||h==='127.0.0.1'||h.endsWith('.localhost')||h.startsWith('192.168.')||h.startsWith('10.')||/^172\.(1[6-9]|2[0-9]|3[01])\./.test(h);
+ }catch{return false;}
+}
+if(!origin||!state||!validLocalOrigin(origin)){button.textContent='Invalid request';msg.textContent='Invalid local sign-in request. Close this window and start again from InterION.';}
+else{
+ try{
+  msg.textContent='Loading Firebase configuration…';
+  const r=await fetch('/api/config.js',{cache:'no-store'});
+  const raw=await r.text();if(!r.ok)throw Error('Cloud config returned HTTP '+r.status+': '+raw.slice(0,180));
+  let cfg;try{cfg=JSON.parse(raw)}catch{throw Error('Cloud config was not JSON: '+raw.slice(0,180))}
+  for(const k of ['apiKey','authDomain','projectId','appId'])if(!cfg[k])throw Error('Missing Firebase setting: '+k+'. Check Vercel environment variables.');
+  msg.textContent='Loading Google sign-in…';
+  const [{initializeApp},{getAuth,GoogleAuthProvider,signInWithPopup}]=await Promise.all([
+   import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js'),
+   import('https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js')
+  ]);
+  const auth=getAuth(initializeApp(cfg));const provider=new GoogleAuthProvider();
+  button.disabled=false;button.textContent='Continue with Google';msg.textContent='Ready. Click the button to continue.';
+  button.onclick=async()=>{button.disabled=true;msg.textContent='Opening Google sign-in…';
+   try{
+    const result=await signInWithPopup(auth,provider);
+    msg.textContent='Google verified. Returning to InterION…';
+    const idToken=await result.user.getIdToken(true);
+    if(!window.opener||window.opener.closed)throw Error('The local InterION window was closed. Reopen login and try again.');
+    window.opener.postMessage({type:'INTERION_AUTH',state,idToken},origin);
+    msg.textContent='Signed in successfully. You can close this window.';setTimeout(()=>window.close(),900);
+   }catch(e){msg.textContent='Google sign-in failed: '+(e.code||'')+' '+(e.message||String(e));button.disabled=false;}
+  };
+ }catch(e){button.disabled=true;button.textContent='Sign-in unavailable';msg.textContent='Setup error: '+(e.message||String(e));}
+}
 </script></body></html>
