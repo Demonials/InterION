@@ -170,6 +170,21 @@ async def home():
                 color: #fff;
             }}
             
+            .logout-btn {{
+                color: #b42318;
+                text-decoration: none;
+                font-weight: 650;
+                font-size: 14px;
+                padding: 6px 14px;
+                border: 1px solid #f0c8c5;
+                border-radius: 6px;
+                transition: all 0.2s;
+            }}
+            .logout-btn:hover {{
+                background: #fff1f0;
+                border-color: #b42318;
+            }}
+
             /* ===== STATS BAR ===== */
             .stats {{
                 display: grid;
@@ -656,6 +671,7 @@ async def home():
                 <div class="header-right">
                     <span class="url-display">{url}</span>
                     <a href="/qr" class="qr-btn">📱 QR</a>
+                    <a href="/logout" class="logout-btn" onclick="return confirm('Log out and release this host account so another approved account can sign in?')">↪ Log out</a>
                 </div>
             </div>
             
