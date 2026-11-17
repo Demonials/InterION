@@ -12,16 +12,11 @@
   ],
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
+      "handle": "filesystem"
     },
     {
       "src": "/",
       "dest": "/control-center/index.html"
-    },
-    {
-      "src": "/control-center/(.*)",
-      "dest": "/control-center/$1"
     }
   ]
 }
