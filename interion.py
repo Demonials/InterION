@@ -5,7 +5,7 @@ import socket
 import qrcode
 import hashlib
 from datetime import datetime
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 import uvicorn
 from typing import Optional
@@ -28,7 +28,7 @@ else:
 
 app = FastAPI(title="INTERion File Share", version="1.0")
 
-from access_control import install_access_control
+from access_control import install_access_control, log_transfer
 install_access_control(app)
 
 def get_local_ip():
@@ -823,16 +823,17 @@ async def upload_file(
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/download/{filename}")
-async def download_file(filename: str):
+async def download_file(filename: str, request: Request):
     file_path = os.path.join(UPLOAD_FOLDER, filename)
     
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     
+    log_transfer(request, {"event":"download","fileName":filename,"size":file_metadata.get(filename,{}).get("size",0),"direction":"download","result":"success"})
     return FileResponse(file_path, filename=filename)
 
 @app.get("/delete/{filename}")
-async def delete_file(filename: str):
+async def delete_file(filename: str, request: Request):
     file_path = os.path.join(UPLOAD_FOLDER, filename)
     
     if os.path.exists(file_path):
@@ -841,6 +842,7 @@ async def delete_file(filename: str):
             del file_metadata[filename]
             with open(METADATA_FILE, 'w') as f:
                 json.dump(file_metadata, f, indent=2)
+        log_transfer(request, {"event":"delete","fileName":filename,"direction":"delete","result":"success"})
         return JSONResponse({"status": "success"})
     else:
         raise HTTPException(status_code=404, detail="File not found")
