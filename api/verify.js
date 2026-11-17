@@ -1,0 +1,2 @@
+const {authenticate,ensureUser}=require("./_firebase");
+module.exports=async(req,res)=>{if(req.method!=="POST")return res.status(405).json({error:"Method not allowed"});try{const decoded=await authenticate(req);const {user,owner}=await ensureUser(decoded);return res.status(200).json({uid:decoded.uid,email:decoded.email,status:owner?"approved":user.status||"pending",role:owner?"admin":user.role||"user"});}catch(e){return res.status(e.status||500).json({error:e.message||"Verification failed"});}};
