@@ -1,3 +1,20 @@
 {
-  "outputDirectory": "control-center"
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "builds": [
+    {
+      "src": "control-center/index.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "api/*.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "^/$",
+      "dest": "/control-center/index.html"
+    }
+  ]
 }
