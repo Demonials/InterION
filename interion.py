@@ -12,19 +12,35 @@ from typing import Optional
 import aiofiles
 
 # Configuration
-UPLOAD_FOLDER = "shared_files"
-METADATA_FILE = "file_metadata.json"
+DATA_ROOT = "account_data"
 PORT = 8000
+os.makedirs(DATA_ROOT, exist_ok=True)
 
-# Create folder
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+def account_storage(request: Request):
+    """Return isolated storage paths and metadata for the authenticated Firebase UID."""
+    user = getattr(request.state, "interion_user", None) or {}
+    uid = str(user.get("uid", ""))
+    if not uid or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for ch in uid):
+        raise HTTPException(status_code=401, detail="Authenticated account is missing.")
+    account_dir = os.path.join(DATA_ROOT, uid)
+    upload_dir = os.path.join(account_dir, "files")
+    metadata_path = os.path.join(account_dir, "file_metadata.json")
+    os.makedirs(upload_dir, exist_ok=True)
+    if os.path.exists(metadata_path):
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            metadata = {}
+    else:
+        metadata = {}
+    return upload_dir, metadata_path, metadata
 
-# Load metadata
-if os.path.exists(METADATA_FILE):
-    with open(METADATA_FILE, 'r') as f:
-        file_metadata = json.load(f)
-else:
-    file_metadata = {}
+def safe_filename(name: str) -> str:
+    cleaned = os.path.basename(str(name or "").replace("\\", "/")).strip()
+    if cleaned in ("", ".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    return cleaned
 
 app = FastAPI(title="INTERion File Share", version="1.0")
 
@@ -50,7 +66,8 @@ def format_size(size):
     return f"{size:.1f} GB"
 
 @app.get("/", response_class=HTMLResponse)
-async def home():
+async def home(request: Request):
+    upload_folder, metadata_file, file_metadata = account_storage(request)
     ip = get_local_ip()
     url = f"http://{ip}:{PORT}"
     
@@ -789,81 +806,66 @@ async def home():
     return HTMLResponse(html)
 
 @app.post("/upload")
-async def upload_file(
-    request: Request,
-    file: UploadFile = File(...),
-    filename: Optional[str] = Form(None)
-):
+async def upload_file(request: Request, file: UploadFile = File(...), filename: Optional[str] = Form(None)):
+    upload_folder, metadata_file, file_metadata = account_storage(request)
     try:
-        original_filename = file.filename
-        
+        original_filename = safe_filename(file.filename)
         if filename and filename.strip():
-            name_without_ext = filename.strip()
             _, ext = os.path.splitext(original_filename)
-            final_filename = name_without_ext + ext
+            requested = safe_filename(filename.strip())
+            final_filename = os.path.splitext(requested)[0] + ext
         else:
             final_filename = original_filename
-        
-        file_path = os.path.join(UPLOAD_FOLDER, final_filename)
+        file_path = os.path.join(upload_folder, final_filename)
         counter = 1
         while os.path.exists(file_path):
             name, ext = os.path.splitext(final_filename)
             final_filename = f"{name}_{counter}{ext}"
-            file_path = os.path.join(UPLOAD_FOLDER, final_filename)
-        
+            file_path = os.path.join(upload_folder, final_filename)
         size = 0
-        chunk_size = 1024 * 1024
-        
         async with aiofiles.open(file_path, 'wb') as f:
-            while chunk := await file.read(chunk_size):
+            while chunk := await file.read(1024 * 1024):
                 await f.write(chunk)
                 size += len(chunk)
-        
         file_metadata[final_filename] = {
             'original_name': original_filename,
-            'custom_name': filename if filename and filename.strip() else original_filename,
+            'custom_name': filename.strip() if filename and filename.strip() else original_filename,
             'size': size,
             'upload_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'size_readable': format_size(size)
         }
-        
-        with open(METADATA_FILE, 'w') as f:
+        with open(metadata_file, 'w', encoding='utf-8') as f:
             json.dump(file_metadata, f, indent=2)
-        
         log_transfer(request, {"event":"upload","fileName":final_filename,"size":size,"direction":"upload","result":"success"})
-        return JSONResponse({
-            "status": "success",
-            "filename": final_filename,
-            "size": format_size(size)
-        })
-        
+        return JSONResponse({"status":"success","filename":final_filename,"size":format_size(size)})
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/download/{filename}")
 async def download_file(filename: str, request: Request):
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-    
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    
+    upload_folder, metadata_file, file_metadata = account_storage(request)
+    filename = safe_filename(filename)
+    file_path = os.path.join(upload_folder, filename)
+    if not os.path.isfile(file_path) or filename not in file_metadata:
+        raise HTTPException(status_code=404, detail="File not found in this account.")
     log_transfer(request, {"event":"download","fileName":filename,"size":file_metadata.get(filename,{}).get("size",0),"direction":"download","result":"success"})
     return FileResponse(file_path, filename=filename)
 
 @app.get("/delete/{filename}")
 async def delete_file(filename: str, request: Request):
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-    
-    if os.path.exists(file_path):
+    upload_folder, metadata_file, file_metadata = account_storage(request)
+    filename = safe_filename(filename)
+    file_path = os.path.join(upload_folder, filename)
+    if os.path.isfile(file_path) and filename in file_metadata:
         os.remove(file_path)
-        if filename in file_metadata:
-            del file_metadata[filename]
-            with open(METADATA_FILE, 'w') as f:
-                json.dump(file_metadata, f, indent=2)
+        del file_metadata[filename]
+        with open(metadata_file, 'w', encoding='utf-8') as f:
+            json.dump(file_metadata, f, indent=2)
         log_transfer(request, {"event":"delete","fileName":filename,"direction":"delete","result":"success"})
-        return JSONResponse({"status": "success"})
-    else:
-        raise HTTPException(status_code=404, detail="File not found")
+        return JSONResponse({"status":"success"})
+    raise HTTPException(status_code=404, detail="File not found in this account.")
 
 @app.get("/qr", response_class=HTMLResponse)
 async def show_qr():
