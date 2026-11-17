@@ -3,7 +3,7 @@ try:
  load_dotenv()
 except ImportError:
  pass
-import json, os, socket, ipaddress, urllib.error, urllib.request
+import json, os, socket, ipaddress, urllib.error, urllib.request, secrets, time
 from pathlib import Path
 from typing import Any
 from fastapi import FastAPI, HTTPException, Request
@@ -14,6 +14,8 @@ COOKIE='interion_firebase'
 COOKIE_SECURE=os.getenv('INTERION_COOKIE_SECURE','false').lower()=='true'
 HOST_FILE=Path(os.getenv('INTERION_HOST_FILE','interion_host.json'))
 LAN_CIDR=os.getenv('INTERION_LAN_CIDR','').strip()
+_AUTH_CHALLENGES={}
+AUTH_ORIGIN='https://interion-zeta.vercel.app'
 def public_config():
  global _PUBLIC_CONFIG
  if _PUBLIC_CONFIG is not None:return _PUBLIC_CONFIG
@@ -46,13 +48,22 @@ def claim_host(uid):
  if not HOST_FILE.exists():HOST_FILE.write_text(json.dumps({'uid':uid},indent=2))
  if host_uid()!=uid:raise HTTPException(403,'This host is registered to another account. Same-account devices only.')
 def login_html():
- cfg=json.dumps(public_config())
- body='''<h1>Sign in to InterION</h1><p>Use the same Google account on every device connected to this host.</p><button id="signin">Continue with Google</button><p id="msg"></p><script type="module">
-import {initializeApp} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import {getAuth,GoogleAuthProvider,signInWithPopup} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-const app=initializeApp(CONFIG);const auth=getAuth(app);document.getElementById('signin').onclick=async()=>{try{const u=await signInWithPopup(auth,new GoogleAuthProvider());const idToken=await u.user.getIdToken(true);const r=await fetch('/auth/firebase',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idToken})});const d=await r.json();if(!r.ok)throw Error(d.detail||'Sign in failed');location.href=d.redirect||'/';}catch(e){document.getElementById('msg').textContent=e.message;}};
-</script>'''.replace('CONFIG',cfg)
- return HTMLResponse('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>InterION Login</title><style>body{font-family:system-ui;background:#f3f5f7;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}main{background:white;padding:32px;border-radius:20px;max-width:460px;width:100%}button{background:#15171a;color:white;border:0;border-radius:10px;padding:13px 20px;font-weight:700}</style></head><body><main><b>⚡ INTERION</b>'+body+'</main></body></html>')
+ body='''<h1>Sign in to InterION</h1><p>Google sign-in securely opens on InterION Cloud. No local IP needs to be registered with Firebase.</p><button id="signin">Continue with Google</button><p id="msg"></p><script>
+const CLOUD_ORIGIN='https://interion-zeta.vercel.app';
+const msg=document.getElementById('msg'),button=document.getElementById('signin');
+button.onclick=async()=>{let popup;try{
+ const cr=await fetch('/auth/challenge',{method:'POST'});if(!cr.ok)throw Error('Could not start secure sign-in ('+cr.status+')');const {state}=await cr.json();
+ const target=location.origin;const url=CLOUD_ORIGIN+'/auth.html?origin='+encodeURIComponent(target)+'&state='+encodeURIComponent(state);
+ popup=window.open(url,'interion_google_login','width=520,height=680');
+ if(!popup)throw Error('Popup blocked. Allow popups for this local InterION page and try again.');
+ msg.textContent='Complete Google sign-in in the popup…';
+ const timer=setInterval(()=>{if(popup.closed){clearInterval(timer);if(msg.textContent.startsWith('Complete'))msg.textContent='Sign-in window closed. Please try again.';}},500);
+ const handler=async(event)=>{if(event.origin!==CLOUD_ORIGIN||!event.data||event.data.type!=='INTERION_AUTH'||event.data.state!==state)return;window.removeEventListener('message',handler);clearInterval(timer);try{const r=await fetch('/auth/firebase',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idToken:event.data.idToken,state})});const d=await r.json();if(!r.ok)throw Error(d.detail||'Sign-in failed');location.href=d.redirect||'/';}catch(e){msg.textContent=e.message;}};
+ window.addEventListener('message',handler);
+ }catch(e){if(popup&&!popup.closed)popup.close();msg.textContent=e.message;}};
+</script>'''
+ return HTMLResponse('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>InterION Login</title><style>body{font-family:system-ui;background:#f3f5f7;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}main{background:white;padding:32px;border-radius:20px;max-width:460px;width:100%}button{background:#15171a;color:white;border:0;border-radius:10px;padding:13px 20px;font-weight:700}#msg{overflow-wrap:anywhere;color:#b42318}</style></head><body><main><b>⚡ INTERION</b>'+body+'</main></body></html>')
+
 def client_is_local(request:Request):
  try:
   remote=ipaddress.ip_address(request.client.host)
@@ -70,7 +81,7 @@ def install_access_control(app:FastAPI):
  async def gate(request:Request,call_next):
   path=request.url.path
   if path!='/health' and not client_is_local(request):return HTMLResponse('<h2>Local network required</h2><p>Connect to the same local network as the InterION host.</p>',status_code=403)
-  if path in {'/login','/auth/firebase','/logout','/health','/favicon.ico'}:return await call_next(request)
+  if path in {'/login','/auth/challenge','/auth/firebase','/logout','/health','/favicon.ico'}:return await call_next(request)
   token=request.cookies.get(COOKIE)
   if not token:return RedirectResponse('/login',status_code=303)
   try:
@@ -87,9 +98,20 @@ def install_access_control(app:FastAPI):
   return await call_next(request)
  @app.get('/login',response_class=HTMLResponse)
  async def login():return login_html()
+ @app.post('/auth/challenge')
+ async def auth_challenge():
+  now=time.time()
+  for key,expires in list(_AUTH_CHALLENGES.items()):
+   if expires<now:_AUTH_CHALLENGES.pop(key,None)
+  state=secrets.token_urlsafe(32)
+  _AUTH_CHALLENGES[state]=now+300
+  return JSONResponse({'state':state,'expiresIn':300})
  @app.post('/auth/firebase')
  async def firebase_login(request:Request):
-  token=str((await request.json()).get('idToken',''))
+  body=await request.json()
+  token=str(body.get('idToken',''));state=str(body.get('state',''))
+  expires=_AUTH_CHALLENGES.pop(state,None) if state else None
+  if not expires or expires<time.time():raise HTTPException(400,'Sign-in challenge expired or invalid. Please try again.')
   if not token:raise HTTPException(400,'Firebase ID token required')
   v=cloud('verify',{},token)
   if v.get('status')=='approved':claim_host(str(v['uid']))
