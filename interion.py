@@ -1051,7 +1051,7 @@ if __name__ == "__main__":
     print("=" * 50)
     print(f"✅ Server: {url}")
     print(f"📱 Access from phone: {url}")
-    print(f"📂 Files: {UPLOAD_FOLDER}")
+    print(f"📂 Account-isolated files: {DATA_ROOT}/<your-firebase-uid>/files")
     print("=" * 50)
     print("Features:")
     print("  • Upload with custom names")
