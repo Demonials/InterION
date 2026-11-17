@@ -2,7 +2,7 @@
 
 1. Create a Firebase project and add a Web App.
 2. Authentication > Sign-in method: enable Google.
-3. Authentication > Settings > Authorized domains: add the Vercel domain.
+3. Authentication > Settings > Authorized domains: add the Vercel domain and the local hostname/IP used to open InterION, if Firebase accepts it.
 4. Create Cloud Firestore and publish firestore.rules.
 5. Deploy this repository to Vercel. Set FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_PROJECT_ID, FIREBASE_APP_ID, FIREBASE_SERVICE_ACCOUNT (full service-account JSON, secret only in Vercel), and INTERION_ADMIN_EMAIL.
 6. Redeploy. Sign into the dashboard with the owner email; it is auto-approved. New users are pending until approved.
