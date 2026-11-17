@@ -1,5 +1,7 @@
-Flask==2.3.3
-Flask-SocketIO==5.3.6
-Flask-CORS==4.0.0
-python-socketio==5.9.0
-eventlet==0.33.3
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+aiofiles>=23.2
+qrcode[pil]>=7.4
+google-auth>=2.29
+itsdangerous>=2.1
