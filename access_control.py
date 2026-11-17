@@ -54,8 +54,8 @@ def install_access_control(app:FastAPI):
  @app.middleware('http')
  async def gate(request:Request,call_next):
   path=request.url.path
+  if path!='/health' and not client_is_local(request):return HTMLResponse('<h2>Local network required</h2><p>Connect to the same local network as the InterION host.</p>',status_code=403)
   if path in {'/login','/auth/firebase','/logout','/health','/favicon.ico'}:return await call_next(request)
-  if not client_is_local(request):return HTMLResponse('<h2>Local network required</h2><p>Connect to the same local network as the InterION host.</p>',status_code=403)
   token=request.cookies.get(COOKIE)
   if not token:return RedirectResponse('/login',status_code=303)
   try:
