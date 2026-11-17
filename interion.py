@@ -814,6 +814,7 @@ async def upload_file(
         with open(METADATA_FILE, 'w') as f:
             json.dump(file_metadata, f, indent=2)
         
+        log_transfer(request, {"event":"upload","fileName":final_filename,"size":size,"direction":"upload","result":"success"})
         return JSONResponse({
             "status": "success",
             "filename": final_filename,
