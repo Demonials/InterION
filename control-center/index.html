@@ -8,7 +8,7 @@
 <script type="module">
 import {initializeApp} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {getAuth,GoogleAuthProvider,signInWithPopup,onAuthStateChanged,signOut} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-const cfg=await fetch('/api/config').then(r=>r.json());const app=initializeApp(cfg),auth=getAuth(app),provider=new GoogleAuthProvider(),$=x=>document.getElementById(x);let current=null;
+const cfg=await fetch('/api/config.js').then(r=>r.json());const app=initializeApp(cfg),auth=getAuth(app),provider=new GoogleAuthProvider(),$=x=>document.getElementById(x);let current=null;
 async function api(path,opts={}){const t=await current.getIdToken();const r=await fetch(path,{...opts,headers:{'Content-Type':'application/json','Authorization':'Bearer '+t}});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d;}
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function time(v){return v?new Date(v).toLocaleString():'—'}
