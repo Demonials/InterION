@@ -28,6 +28,9 @@ else:
 
 app = FastAPI(title="INTERion File Share", version="1.0")
 
+from access_control import install_access_control
+install_access_control(app)
+
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
